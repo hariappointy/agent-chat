@@ -78,6 +78,7 @@ export function RemoteShell({ userName }: RemoteShellProps) {
   const [session, setSession] = useState<BootstrapResponse | null>(null);
   const [command, setCommand] = useState("pwd");
   const [status, setStatus] = useState("Not connected");
+  const [relayConnected, setRelayConnected] = useState(false);
   const [deviceOnline, setDeviceOnline] = useState(false);
   const [deviceName, setDeviceName] = useState<string | null>(null);
   const [output, setOutput] = useState("Waiting for a command...\n");
@@ -112,6 +113,7 @@ export function RemoteShell({ userName }: RemoteShellProps) {
     setStatus("Connecting to relay...");
 
     socket.addEventListener("open", () => {
+      setRelayConnected(false);
       setStatus("Authenticating browser session...");
       socket.send(
         JSON.stringify({
@@ -126,6 +128,7 @@ export function RemoteShell({ userName }: RemoteShellProps) {
 
       switch (message.type) {
         case "auth-ok": {
+          setRelayConnected(true);
           setStatus("Relay connected");
           break;
         }
@@ -174,12 +177,14 @@ export function RemoteShell({ userName }: RemoteShellProps) {
 
     socket.addEventListener("close", () => {
       setDeviceOnline(false);
+      setRelayConnected(false);
       setStatus("Relay disconnected");
       setIsRunning(false);
       socketRef.current = null;
     });
 
     socket.addEventListener("error", () => {
+      setRelayConnected(false);
       setStatus("Relay connection error");
     });
 
@@ -228,6 +233,7 @@ export function RemoteShell({ userName }: RemoteShellProps) {
 
       const nextSession = (await response.json()) as BootstrapResponse;
       setSession(nextSession);
+      setRelayConnected(false);
       setOutput("Waiting for a command...\n");
       setDeviceName(null);
       setDeviceOnline(false);
@@ -361,11 +367,17 @@ export function RemoteShell({ userName }: RemoteShellProps) {
                 </option>
               ))}
             </select>
-            <span className="text-sm text-muted-foreground">
-              {isBootstrapping ? "Connecting..." : "Relay ready"}
-            </span>
+            <Button
+              disabled={!selectedMachineId || isBootstrapping}
+              onClick={() => selectedMachineId && bootstrapBrowserSession(selectedMachineId)}
+              type="button"
+              variant="outline"
+            >
+              {isBootstrapping ? "Connecting..." : "Reconnect relay"}
+            </Button>
           </div>
           <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+            <span>Relay: {relayConnected ? "Connected" : "Disconnected"}</span>
             <span>Device: {deviceName ?? "offline"}</span>
             <span>Online: {deviceOnline ? "Yes" : "No"}</span>
             {deviceOnline && machines.find((m) => m.id === selectedMachineId)?.runtimes?.length ? (
@@ -392,7 +404,7 @@ export function RemoteShell({ userName }: RemoteShellProps) {
               placeholder="bash command"
               value={command}
             />
-            <Button disabled={!deviceOnline || isRunning || !session} type="submit">
+            <Button disabled={!deviceOnline || !relayConnected || isRunning || !session} type="submit">
               {isRunning ? "Running..." : "Run"}
             </Button>
           </form>
