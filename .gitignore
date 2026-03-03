@@ -1,0 +1,39 @@
+# Node / Next
+node_modules/
+.next/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env
+.env
+.env.*
+
+# Vercel
+.vercel/
+
+# Drizzle
+next-app/drizzle/meta/
+
+# Go
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.log
+
+# Dist
+/dist
