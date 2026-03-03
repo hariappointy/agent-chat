@@ -194,7 +194,7 @@ export function RemoteShell({ userName }: RemoteShellProps) {
       return "Create a machine to generate a connect command.";
     }
 
-    return `npx @agent-chat/daemon --server-url ${serverUrl} --api-key ${apiKey}`;
+    return `npx @hariappointy/agent-chat-daemon --server-url ${serverUrl} --api-key ${apiKey}`;
   }, [apiKey, serverUrl]);
 
   async function loadMachines() {

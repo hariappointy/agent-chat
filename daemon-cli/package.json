@@ -1,5 +1,5 @@
 {
-  "name": "@agent-chat/daemon",
+  "name": "@hariappointy/agent-chat-daemon",
   "version": "0.1.0",
   "private": true,
   "description": "Agent Chat daemon CLI wrapper",

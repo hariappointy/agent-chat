@@ -12,13 +12,15 @@ const platform = process.platform;
 const arch = process.arch;
 
 const target = `${platform}-${arch}`;
-const fileName = `agent-chat-daemon-${target}`;
-const baseUrl = process.env.AGENT_CHAT_DAEMON_RELEASE_URL ||
-  "https://github.com/appointytech/agent-chat/releases/download";
+const extension = platform === "win32" ? ".exe" : "";
+const fileName = `agent-chat-daemon-${target}${extension}`;
+const baseUrl =
+  process.env.AGENT_CHAT_DAEMON_RELEASE_URL ||
+  "https://github.com/hariappointy/agent-chat/releases/download";
 
 const url = `${baseUrl}/v${version}/${fileName}`;
 const distDir = path.join(__dirname, "..", "dist");
-const binaryPath = path.join(distDir, "agent-chat-daemon");
+const binaryPath = path.join(distDir, `agent-chat-daemon${extension}`);
 
 if (!fs.existsSync(distDir)) {
   fs.mkdirSync(distDir, { recursive: true });
