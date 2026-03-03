@@ -363,6 +363,9 @@ func streamOutput(writer *jsonWriter, stream io.Reader, commandID string, stream
 	}
 
 	if err := scanner.Err(); err != nil {
+		if strings.Contains(err.Error(), "file already closed") {
+			return
+		}
 		_ = writer.send(outputMessage{
 			Type:      "command-output",
 			CommandID: commandID,
