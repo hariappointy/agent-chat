@@ -32,23 +32,39 @@ if (fs.existsSync(binaryPath)) {
 
 console.log(`[agent-chat-daemon] Downloading ${url}`);
 
-https
-  .get(url, (response) => {
-    if (response.statusCode !== 200) {
-      console.error(`[agent-chat-daemon] Failed to download (${response.statusCode}).`);
+function downloadWithRedirect(targetUrl, redirectsLeft = 5) {
+  https
+    .get(targetUrl, (response) => {
+      const status = response.statusCode ?? 0;
+
+      if ([301, 302, 307, 308].includes(status)) {
+        if (!response.headers.location || redirectsLeft <= 0) {
+          console.error(`[agent-chat-daemon] Redirect failed (${status}).`);
+          process.exit(1);
+        }
+
+        const nextUrl = new URL(response.headers.location, targetUrl).toString();
+        return downloadWithRedirect(nextUrl, redirectsLeft - 1);
+      }
+
+      if (status !== 200) {
+        console.error(`[agent-chat-daemon] Failed to download (${status}).`);
+        process.exit(1);
+      }
+
+      const file = fs.createWriteStream(binaryPath, { mode: 0o755 });
+      response.pipe(file);
+
+      file.on("finish", () => {
+        file.close();
+        fs.chmodSync(binaryPath, 0o755);
+        console.log("[agent-chat-daemon] Download complete.");
+      });
+    })
+    .on("error", (error) => {
+      console.error("[agent-chat-daemon] Download error:", error.message);
       process.exit(1);
-    }
-
-    const file = fs.createWriteStream(binaryPath, { mode: 0o755 });
-    response.pipe(file);
-
-    file.on("finish", () => {
-      file.close();
-      fs.chmodSync(binaryPath, 0o755);
-      console.log("[agent-chat-daemon] Download complete.");
     });
-  })
-  .on("error", (error) => {
-    console.error("[agent-chat-daemon] Download error:", error.message);
-    process.exit(1);
-  });
+}
+
+downloadWithRedirect(url);
