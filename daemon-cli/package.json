@@ -1,9 +1,15 @@
 {
   "name": "@hariappointy/agent-chat-daemon",
   "version": "0.1.0",
-  "private": true,
   "description": "Agent Chat daemon CLI wrapper",
-  "bin": "./bin/agent-chat-daemon.js",
+  "bin": {
+    "agent-chat-daemon": "bin/agent-chat-daemon.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "dist/"
+  ],
   "scripts": {
     "postinstall": "node ./scripts/download.js"
   },

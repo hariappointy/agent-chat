@@ -18,11 +18,15 @@ pnpm-debug.log*
 next-app/drizzle/meta/
 
 # Go
-bin/
+/bin/
 *.exe
 *.dll
 *.so
 *.dylib
+
+# allow daemon CLI bin
+!daemon-cli/bin/
+!daemon-cli/bin/**
 
 # OS
 .DS_Store
