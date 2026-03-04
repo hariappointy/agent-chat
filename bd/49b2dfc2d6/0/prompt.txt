@@ -1,0 +1,25 @@
+what activet changes do we have in this repo?
+
+---
+
+Like what do you they mean? I can run git diff myslef if i wanted explain the changes
+
+---
+
+stage and commit everything and push. We will soon start working on agents
+
+---
+
+Request interrupted by user
+
+---
+
+Error: Request was aborted.
+
+---
+
+Request cancelled by user
+
+---
+
+what are you doing please do git add . I need you to push every change. Just git add . and commit from agent-chat
