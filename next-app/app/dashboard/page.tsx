@@ -13,5 +13,5 @@ export default async function DashboardPage() {
     redirect("/sign-in");
   }
 
-  return <RemoteShell userName={session.user.name} />;
+  return <RemoteShell userName={session.user.name} userEmail={session.user.email} />;
 }
