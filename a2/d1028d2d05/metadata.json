@@ -3,7 +3,7 @@
   "checkpoint_id": "a2d1028d2d05",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 7,
+  "checkpoints_count": 8,
   "files_touched": [
     "next-app/app/api/machines/route.ts",
     "next-app/components/remote-shell.tsx",
@@ -16,6 +16,13 @@
       "context": "/a2/d1028d2d05/0/context.md",
       "content_hash": "/a2/d1028d2d05/0/content_hash.txt",
       "prompt": "/a2/d1028d2d05/0/prompt.txt"
+    },
+    {
+      "metadata": "/a2/d1028d2d05/1/metadata.json",
+      "transcript": "/a2/d1028d2d05/1/full.jsonl",
+      "context": "/a2/d1028d2d05/1/context.md",
+      "content_hash": "/a2/d1028d2d05/1/content_hash.txt",
+      "prompt": "/a2/d1028d2d05/1/prompt.txt"
     }
   ],
   "token_usage": {
