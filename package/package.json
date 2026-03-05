@@ -1,0 +1,40 @@
+{
+  "name": "@slock-ai/daemon",
+  "version": "0.7.0",
+  "type": "module",
+  "bin": {
+    "slock-daemon": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/botiverse/slock.git",
+    "directory": "packages/daemon"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "@types/ws": "^8.18.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "@slock-ai/shared": "0.1.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "release:patch": "npm version patch --no-git-tag-version && cd ../.. && pnpm install --lockfile-only && git add packages/daemon/package.json pnpm-lock.yaml && git commit -m \"chore: bump @slock-ai/daemon to v$(node -p \"require('./packages/daemon/package.json').version\")\" && git tag daemon-v$(node -p \"require('./packages/daemon/package.json').version\") && git push && git push --tags",
+    "release:minor": "npm version minor --no-git-tag-version && cd ../.. && pnpm install --lockfile-only && git add packages/daemon/package.json pnpm-lock.yaml && git commit -m \"chore: bump @slock-ai/daemon to v$(node -p \"require('./packages/daemon/package.json').version\")\" && git tag daemon-v$(node -p \"require('./packages/daemon/package.json').version\") && git push && git push --tags",
+    "release:major": "npm version major --no-git-tag-version && cd ../.. && pnpm install --lockfile-only && git add packages/daemon/package.json pnpm-lock.yaml && git commit -m \"chore: bump @slock-ai/daemon to v$(node -p \"require('./packages/daemon/package.json').version\")\" && git tag daemon-v$(node -p \"require('./packages/daemon/package.json').version\") && git push && git push --tags"
+  }
+}

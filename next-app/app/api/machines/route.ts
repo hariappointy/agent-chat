@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import { auth } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
@@ -77,4 +77,41 @@ export async function POST(request: Request) {
       deviceId,
     },
   });
+}
+
+export async function DELETE(request: Request) {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const machineId = typeof body.machineId === "string" ? body.machineId : "";
+  if (!machineId) {
+    return NextResponse.json({ error: "machineId is required" }, { status: 400 });
+  }
+
+  const [ownedMachine] = await db
+    .select({ id: schema.machine.id })
+    .from(schema.machine)
+    .where(and(eq(schema.machine.id, machineId), eq(schema.machine.userId, session.user.id)))
+    .limit(1);
+
+  if (!ownedMachine) {
+    return NextResponse.json({ error: "Machine not found" }, { status: 404 });
+  }
+
+  const [deletedMachine] = await db
+    .delete(schema.machine)
+    .where(and(eq(schema.machine.id, machineId), eq(schema.machine.userId, session.user.id)))
+    .returning({ id: schema.machine.id, userId: schema.machine.userId });
+
+  if (!deletedMachine) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  return NextResponse.json({ success: true, machineId: deletedMachine.id });
 }
