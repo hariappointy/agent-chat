@@ -1,0 +1,17 @@
+# Session Context
+
+## User Prompts
+
+### Prompt 1
+
+Hi
+
+### Prompt 2
+
+BYOK Error: 400 {"error":{"message":"level \"minimal\" not supported, valid levels: low, medium, high","type":"invalid_request_error"}}
+
+Troubleshooting tips for custom models:
+1. Verify the "provider" type in your BYOK config matches your endpoint (use "openai" for GPT-4o/GPT-5+/o-series/Codex, "anthropic" for Claude, "generic-chat-completion-api" for other OpenAI-compatible APIs)
+2. Ensure your baseUrl is reachable and the API key is valid
+3. Check that the model name matches what your endp...
+
