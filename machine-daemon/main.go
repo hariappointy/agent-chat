@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -48,12 +49,18 @@ type heartbeatMessage struct {
 	Type     string   `json:"type"`
 }
 
+type bootstrapResponse struct {
+	DaemonToken string `json:"daemonToken"`
+	RelayWsURL  string `json:"relayWsUrl"`
+}
+
 func main() {
 	relayURL := flag.String("relay-url", "", "relay websocket URL (legacy)")
 	serverURL := flag.String("server-url", "", "server base URL for API bootstrap")
 	apiKey := flag.String("api-key", "", "machine API key")
 	token := flag.String("token", "", "daemon auth token (legacy)")
 	name := flag.String("name", "", "display name for UI")
+	chatBridgePath := flag.String("chat-bridge-path", "", "path to Slock MCP chat bridge JS")
 	flag.Parse()
 
 	hostName := *name
@@ -67,6 +74,12 @@ func main() {
 	}
 
 	runtimes := detectRuntimes()
+	resolvedBridgePath := resolveChatBridgePath(*chatBridgePath)
+	if resolvedBridgePath != "" {
+		fmt.Printf("Using chat bridge: %s\n", resolvedBridgePath)
+	} else {
+		fmt.Println("Chat bridge not found; agent:start will fail until --chat-bridge-path is provided")
+	}
 
 	if *token == "" && (*apiKey == "" || *serverURL == "") {
 		fmt.Fprintln(os.Stderr, "--api-key and --server-url are required (or use legacy --token + --relay-url)")
@@ -84,7 +97,7 @@ func main() {
 		}
 
 		fmt.Printf("Connecting to relay %s\n", resolvedRelayURL)
-		err = connectAndServe(resolvedRelayURL, resolvedToken, hostName, runtimes, *serverURL, *apiKey)
+		err = connectAndServe(resolvedRelayURL, resolvedToken, hostName, runtimes, *serverURL, *apiKey, resolvedBridgePath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "relay disconnected: %v\n", err)
 		}
@@ -108,12 +121,7 @@ func resolveConnection(relayURL, token, serverURL, apiKey, hostName string, runt
 		return "", "", err
 	}
 
-	return bootstrap.RelayWsUrl, bootstrap.DaemonToken, nil
-}
-
-type bootstrapResponse struct {
-	DaemonToken string `json:"daemonToken"`
-	RelayWsUrl  string `json:"relayWsUrl"`
+	return bootstrap.RelayWsURL, bootstrap.DaemonToken, nil
 }
 
 func bootstrapMachine(serverURL, apiKey, hostName string, runtimes []string) (*bootstrapResponse, error) {
@@ -155,7 +163,7 @@ func bootstrapMachine(serverURL, apiKey, hostName string, runtimes []string) (*b
 	return &result, nil
 }
 
-func connectAndServe(relayURL, token, hostName string, runtimes []string, serverURL, apiKey string) error {
+func connectAndServe(relayURL, token, hostName string, runtimes []string, serverURL, apiKey, chatBridgePath string) error {
 	connection, _, err := websocket.DefaultDialer.Dial(relayURL, nil)
 	if err != nil {
 		return err
@@ -163,6 +171,8 @@ func connectAndServe(relayURL, token, hostName string, runtimes []string, server
 	defer connection.Close()
 
 	writer := &jsonWriter{connection: connection}
+	manager := newAgentManager(chatBridgePath, serverURL, apiKey, writer.send)
+
 	if err := writer.send(authMessage{Type: "auth", Token: token, HostName: hostName, Runtimes: runtimes}); err != nil {
 		return err
 	}
@@ -171,13 +181,14 @@ func connectAndServe(relayURL, token, hostName string, runtimes []string, server
 	stopHeartbeat := make(chan struct{})
 	go startHeartbeat(writer, hostName, runtimes, stopHeartbeat)
 	if apiKey != "" && serverURL != "" {
-		go startApiHeartbeat(serverURL, apiKey, hostName, runtimes, stopHeartbeat)
+		go startAPIHeartbeat(serverURL, apiKey, hostName, runtimes, stopHeartbeat)
 	}
 
 	for {
 		_, raw, err := connection.ReadMessage()
 		if err != nil {
 			close(stopHeartbeat)
+			manager.stopAll()
 			return err
 		}
 
@@ -191,19 +202,160 @@ func connectAndServe(relayURL, token, hostName string, runtimes []string, server
 		switch messageType {
 		case "auth-ok":
 			fmt.Println("Authentication successful")
+			_ = writer.send(map[string]any{
+				"type":          "ready",
+				"capabilities":  []string{"agent:start", "agent:stop", "agent:deliver", "workspace:files"},
+				"runtimes":      runtimes,
+				"runningAgents": manager.runningAgentIDs(),
+				"hostname":      hostName,
+				"os":            detectOSLabel(),
+				"daemonVersion": "go-clone-0.1.0",
+			})
 		case "run-command":
 			commandID, _ := incoming["commandId"].(string)
 			command, _ := incoming["command"].(string)
 			if commandID == "" || command == "" {
 				continue
 			}
-
 			go runCommand(writer, runCommandMessage{Type: "run-command", CommandID: commandID, Command: command})
+		case "agent:start":
+			agentID := getString(incoming, "agentId")
+			if agentID == "" {
+				continue
+			}
+			config := parseAgentConfig(incoming["config"], serverURL, apiKey)
+			wakeMessage := parseWakeMessage(incoming["wakeMessage"])
+			unreadSummary := parseUnreadSummary(incoming["unreadSummary"])
+			go func() {
+				if err := manager.startAgent(agentID, config, wakeMessage, unreadSummary); err != nil {
+					reason := err.Error()
+					_ = writer.send(map[string]any{"type": "agent:status", "agentId": agentID, "status": "inactive"})
+					_ = writer.send(map[string]any{"type": "agent:activity", "agentId": agentID, "activity": "offline", "detail": "Start failed: " + reason})
+				}
+			}()
+		case "agent:stop":
+			manager.stopAgent(getString(incoming, "agentId"))
+		case "agent:sleep":
+			manager.sleepAgent(getString(incoming, "agentId"))
+		case "agent:reset-workspace":
+			manager.resetWorkspace(getString(incoming, "agentId"))
+		case "agent:deliver":
+			agentID := getString(incoming, "agentId")
+			if agentID == "" {
+				continue
+			}
+			msg := parseWakeMessage(incoming["message"])
+			if msg != nil {
+				manager.deliverMessage(agentID, *msg)
+			}
+			_ = writer.send(map[string]any{"type": "agent:deliver:ack", "agentId": agentID, "seq": incoming["seq"]})
+		case "agent:workspace:list":
+			agentID := getString(incoming, "agentId")
+			dirPath := getString(incoming, "dirPath")
+			files := manager.getFileTree(agentID, dirPath)
+			_ = writer.send(map[string]any{"type": "agent:workspace:file_tree", "agentId": agentID, "files": files, "dirPath": dirPath})
+		case "agent:workspace:read":
+			agentID := getString(incoming, "agentId")
+			path := getString(incoming, "path")
+			requestID := getString(incoming, "requestId")
+			content, binary, err := manager.readFile(agentID, path)
+			if err != nil {
+				_ = writer.send(map[string]any{"type": "agent:workspace:file_content", "agentId": agentID, "requestId": requestID, "content": nil, "binary": false})
+				continue
+			}
+			if binary {
+				_ = writer.send(map[string]any{"type": "agent:workspace:file_content", "agentId": agentID, "requestId": requestID, "content": nil, "binary": true})
+				continue
+			}
+			_ = writer.send(map[string]any{"type": "agent:workspace:file_content", "agentId": agentID, "requestId": requestID, "content": content, "binary": false})
+		case "machine:workspace:scan":
+			directories := manager.scanAllWorkspaces()
+			_ = writer.send(map[string]any{"type": "machine:workspace:scan_result", "directories": directories})
+		case "machine:workspace:delete":
+			directoryName := getString(incoming, "directoryName")
+			success := manager.deleteWorkspaceDirectory(directoryName)
+			_ = writer.send(map[string]any{"type": "machine:workspace:delete_result", "directoryName": directoryName, "success": success})
+		case "ping":
+			_ = writer.send(map[string]any{"type": "pong"})
 		case "error":
 			message, _ := incoming["error"].(string)
 			fmt.Fprintf(os.Stderr, "relay error: %s\n", message)
 		}
 	}
+}
+
+func parseAgentConfig(value any, defaultServerURL, daemonAPIKey string) AgentConfig {
+	cfg := AgentConfig{Runtime: "claude", ServerURL: defaultServerURL, AuthToken: daemonAPIKey}
+	m, ok := value.(map[string]any)
+	if !ok {
+		return cfg
+	}
+	if v, ok := m["runtime"].(string); ok && strings.TrimSpace(v) != "" {
+		cfg.Runtime = v
+	}
+	if v, ok := m["model"].(string); ok {
+		cfg.Model = v
+	}
+	if v, ok := m["sessionId"].(string); ok {
+		cfg.SessionID = v
+	}
+	if v, ok := m["serverUrl"].(string); ok && strings.TrimSpace(v) != "" {
+		cfg.ServerURL = v
+	}
+	if v, ok := m["authToken"].(string); ok && strings.TrimSpace(v) != "" {
+		cfg.AuthToken = v
+	}
+	if v, ok := m["name"].(string); ok {
+		cfg.Name = v
+	}
+	if v, ok := m["displayName"].(string); ok {
+		cfg.DisplayName = v
+	}
+	if v, ok := m["description"].(string); ok {
+		cfg.Description = v
+	}
+	if v, ok := m["reasoningEffort"].(string); ok {
+		cfg.ReasoningEffort = v
+	}
+	return cfg
+}
+
+func parseWakeMessage(value any) *IncomingChatMessage {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	msg := &IncomingChatMessage{
+		ChannelName: getString(m, "channel_name"),
+		ChannelType: getString(m, "channel_type"),
+		Content:     getString(m, "content"),
+		SenderName:  getString(m, "sender_name"),
+		SenderType:  getString(m, "sender_type"),
+		Timestamp:   getString(m, "timestamp"),
+	}
+	return msg
+}
+
+func parseUnreadSummary(value any) map[string]int {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]int)
+	for key, raw := range m {
+		switch v := raw.(type) {
+		case float64:
+			out[key] = int(v)
+		case int:
+			out[key] = v
+		}
+	}
+	return out
+}
+
+func getString(m map[string]any, key string) string {
+	v, _ := m[key].(string)
+	return v
 }
 
 func startHeartbeat(writer *jsonWriter, hostName string, runtimes []string, stop <-chan struct{}) {
@@ -220,21 +372,21 @@ func startHeartbeat(writer *jsonWriter, hostName string, runtimes []string, stop
 	}
 }
 
-func startApiHeartbeat(serverURL, apiKey, hostName string, runtimes []string, stop <-chan struct{}) {
+func startAPIHeartbeat(serverURL, apiKey, hostName string, runtimes []string, stop <-chan struct{}) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			_ = sendHeartbeatToApi(serverURL, apiKey, hostName, runtimes)
+			_ = sendHeartbeatToAPI(serverURL, apiKey, hostName, runtimes)
 		case <-stop:
 			return
 		}
 	}
 }
 
-func sendHeartbeatToApi(serverURL, apiKey, hostName string, runtimes []string) error {
+func sendHeartbeatToAPI(serverURL, apiKey, hostName string, runtimes []string) error {
 	payload := map[string]any{
 		"hostName": hostName,
 		"runtimes": runtimes,
@@ -271,14 +423,54 @@ func sendHeartbeatToApi(serverURL, apiKey, hostName string, runtimes []string) e
 func detectRuntimes() []string {
 	runtimeCandidates := []string{"claude", "codex"}
 	available := make([]string, 0, len(runtimeCandidates))
-
 	for _, runtime := range runtimeCandidates {
 		if _, err := exec.LookPath(runtime); err == nil {
 			available = append(available, runtime)
 		}
 	}
-
 	return available
+}
+
+func resolveChatBridgePath(explicitPath string) string {
+	candidates := make([]string, 0)
+	if strings.TrimSpace(explicitPath) != "" {
+		candidates = append(candidates, explicitPath)
+	}
+	if envPath := strings.TrimSpace(os.Getenv("SLOCK_CHAT_BRIDGE_PATH")); envPath != "" {
+		candidates = append(candidates, envPath)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(cwd, "package", "dist", "chat-bridge.js"),
+			filepath.Join(cwd, "..", "package", "dist", "chat-bridge.js"),
+		)
+	}
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "chat-bridge.js"),
+			filepath.Join(exeDir, "..", "package", "dist", "chat-bridge.js"),
+		)
+	}
+
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		abs, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		if _, ok := seen[abs]; ok {
+			continue
+		}
+		seen[abs] = struct{}{}
+		if info, err := os.Stat(abs); err == nil && !info.IsDir() {
+			return abs
+		}
+	}
+	return ""
 }
 
 func minDuration(value, max time.Duration) time.Duration {
@@ -296,7 +488,6 @@ type jsonWriter struct {
 func (w *jsonWriter) send(payload any) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
-
 	return w.connection.WriteJSON(payload)
 }
 
@@ -349,7 +540,7 @@ func runCommand(writer *jsonWriter, message runCommandMessage) {
 	_ = writer.send(exitMessage{Type: "command-exit", CommandID: message.CommandID, ExitCode: exitCode})
 }
 
-func streamOutput(writer *jsonWriter, stream io.Reader, commandID string, streamName string) {
+func streamOutput(writer *jsonWriter, stream io.Reader, commandID, streamName string) {
 	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 4096), 1024*1024)
 
